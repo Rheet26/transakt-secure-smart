@@ -1,58 +1,79 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Fingerprint, Lock, Mail, User, AlertCircle } from "lucide-react";
+import { Fingerprint, Mail, User, AlertCircle, CheckCircle } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
+  const [isOtpMode, setIsOtpMode] = useState(false);
+  const [showBiometric, setShowBiometric] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
     password: "",
   });
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
-  const { login, signup, mockBiometricAuth, isLoading } = useAuth();
+  const { signInWithOtp, signUp, mockBiometricAuth, isLoading, hasValidSession, user } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user && hasValidSession) {
+      navigate("/dashboard");
+    }
+  }, [user, hasValidSession, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccessMessage("");
 
-    if (!formData.email || !formData.password || (!isLogin && !formData.name)) {
-      setError("Please fill in all fields");
+    if (!formData.email) {
+      setError("Please enter your email");
       return;
     }
 
-    let success = false;
     if (isLogin) {
-      success = await login(formData.email, formData.password);
-      if (!success) {
-        setError("Invalid email or password");
+      // Send OTP for login
+      const { error } = await signInWithOtp(formData.email);
+      if (error) {
+        setError(error.message);
+      } else {
+        setSuccessMessage("Check your email for the magic link to sign in!");
+        setIsOtpMode(true);
+        setShowBiometric(true);
       }
     } else {
-      success = await signup(formData.name, formData.email, formData.password);
-      if (!success) {
-        setError("User already exists with this email");
+      // Sign up with email and password
+      if (!formData.password || !formData.name) {
+        setError("Please fill in all fields");
+        return;
       }
-    }
 
-    if (success) {
-      toast({
-        title: isLogin ? "Welcome back!" : "Account created!",
-        description: isLogin ? "You've been logged in successfully." : "Your account has been created and you're now logged in.",
-      });
-      navigate("/dashboard");
+      const { error } = await signUp(formData.email, formData.password, formData.name);
+      if (error) {
+        setError(error.message);
+      } else {
+        setSuccessMessage("Check your email to confirm your account before signing in.");
+        setIsLogin(true);
+        setFormData({ name: "", email: formData.email, password: "" });
+      }
     }
   };
 
   const handleBiometricAuth = async () => {
     setError("");
+    if (!hasValidSession) {
+      setError("Please sign in with email first to enable biometric authentication");
+      return;
+    }
+    
     const success = await mockBiometricAuth();
     if (success) {
       toast({
@@ -92,75 +113,88 @@ const Auth = () => {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Biometric Authentication */}
-            <Button
-              type="button"
-              variant="glass"
-              className="w-full"
-              onClick={handleBiometricAuth}
-              disabled={isLoading}
-            >
-              <Fingerprint className="w-4 h-4 mr-2" />
-              {isLoading ? "Scanning..." : "Use Biometric Authentication"}
-            </Button>
+            {/* Success Message */}
+            {successMessage && (
+              <div className="flex items-center space-x-2 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                <CheckCircle className="w-4 h-4 text-green-500" />
+                <span className="text-green-500 text-sm">{successMessage}</span>
+              </div>
+            )}
 
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border"></div>
+            {/* Biometric Authentication - Only show after valid session */}
+            {showBiometric && hasValidSession && (
+              <Button
+                type="button"
+                variant="glass"
+                className="w-full"
+                onClick={handleBiometricAuth}
+                disabled={isLoading}
+              >
+                <Fingerprint className="w-4 h-4 mr-2" />
+                {isLoading ? "Scanning..." : "Continue with Biometric Authentication"}
+              </Button>
+            )}
+
+            {showBiometric && hasValidSession && (
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-border"></div>
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">Or continue with biometric</span>
+                </div>
               </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">Or continue with email</span>
-              </div>
-            </div>
+            )}
 
             {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {!isLogin && (
+            {!isOtpMode && (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {!isLogin && (
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Full Name</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="name"
+                        type="text"
+                        placeholder="Enter your full name"
+                        className="pl-10"
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2">
-                  <Label htmlFor="name">Full Name</Label>
+                  <Label htmlFor="email">Email</Label>
                   <div className="relative">
-                    <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
-                      id="name"
-                      type="text"
-                      placeholder="Enter your full name"
+                      id="email"
+                      type="email"
+                      placeholder="Enter your email"
                       className="pl-10"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                     />
                   </div>
                 </div>
-              )}
 
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="Enter your email"
-                    className="pl-10"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="Enter your password"
-                    className="pl-10"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  />
-                </div>
-              </div>
+                {!isLogin && (
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type="password"
+                        placeholder="Create a password"
+                        value={formData.password}
+                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                )}
 
               {error && (
                 <div className="flex items-center space-x-2 text-destructive text-sm">
@@ -169,50 +203,48 @@ const Auth = () => {
                 </div>
               )}
 
-              <Button 
-                type="submit" 
-                className="w-full" 
-                variant="gradient"
-                disabled={isLoading}
-              >
-                {isLoading ? "Please wait..." : (isLogin ? "Sign In" : "Create Account")}
-              </Button>
-            </form>
+                <Button 
+                  type="submit" 
+                  className="w-full" 
+                  variant="gradient"
+                  disabled={isLoading}
+                >
+                  {isLoading ? "Please wait..." : (isLogin ? "Send Magic Link" : "Create Account")}
+                </Button>
+              </form>
+            )}
 
             {/* Links */}
-            <div className="space-y-2 text-center text-sm">
-              {isLogin && (
-                <Button variant="link" className="text-muted-foreground">
-                  Forgot password?
-                </Button>
-              )}
-              
-              <div className="text-muted-foreground">
-                {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
-                <Button
-                  variant="link"
-                  className="text-primary p-0 h-auto"
-                  onClick={() => {
-                    setIsLogin(!isLogin);
-                    setError("");
-                    setFormData({ name: "", email: "", password: "" });
-                  }}
-                >
-                  {isLogin ? "Sign up" : "Sign in"}
-                </Button>
+            {!isOtpMode && (
+              <div className="space-y-2 text-center text-sm">
+                <div className="text-muted-foreground">
+                  {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
+                  <Button
+                    variant="link"
+                    className="text-primary p-0 h-auto"
+                    onClick={() => {
+                      setIsLogin(!isLogin);
+                      setError("");
+                      setSuccessMessage("");
+                      setFormData({ name: "", email: "", password: "" });
+                    }}
+                  >
+                    {isLogin ? "Sign up" : "Sign in"}
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Demo Credentials */}
+        {/* Demo Info */}
         <Card className="mt-4 bg-secondary/20 border-border">
           <CardContent className="pt-4">
             <p className="text-sm text-muted-foreground text-center mb-2">
-              Demo credentials:
+              Demo Mode:
             </p>
             <p className="text-xs text-muted-foreground text-center">
-              Email: sarah@example.com | Password: password
+              Use any email to test the authentication flow
             </p>
           </CardContent>
         </Card>

@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -34,7 +34,7 @@ const Dashboard = () => {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-2xl font-bold text-foreground">
-                Welcome back, {user.name}
+                Welcome back, {profile?.display_name || profile?.full_name || user?.email?.split('@')[0] || 'User'}
               </h1>
               <p className="text-muted-foreground">
                 Here's what's happening with your money today.
@@ -68,7 +68,7 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold mb-2">
-                ${user.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                ${(profile?.balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </div>
               <div className="text-primary-foreground/80">
                 Available balance

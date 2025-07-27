@@ -1,19 +1,27 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { User, Session } from '@supabase/supabase-js';
+import { supabase } from '@/integrations/supabase/client';
 
-interface User {
+interface Profile {
   id: string;
-  name: string;
-  email: string;
+  display_name: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
   balance: number;
+  created_at: string;
+  updated_at: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<boolean>;
-  signup: (name: string, email: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  profile: Profile | null;
+  session: Session | null;
   isLoading: boolean;
+  signInWithOtp: (email: string) => Promise<{ error: any }>;
+  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: any }>;
+  logout: () => Promise<void>;
   mockBiometricAuth: () => Promise<boolean>;
+  hasValidSession: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -26,89 +34,136 @@ export const useAuth = () => {
   return context;
 };
 
-// Mock user data
-const mockUsers = [
-  { id: '1', name: 'Sarah Johnson', email: 'sarah@example.com', password: 'password', balance: 12450.75 },
-  { id: '2', name: 'John Doe', email: 'john@example.com', password: 'password', balance: 8350.20 },
-];
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    // Check for stored auth
-    const storedUser = localStorage.getItem('transakt_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-  }, []);
+  const hasValidSession = !!session;
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-    
-    const foundUser = mockUsers.find(u => u.email === email && u.password === password);
-    if (foundUser) {
-      const { password: _, ...userWithoutPassword } = foundUser;
-      setUser(userWithoutPassword);
-      localStorage.setItem('transakt_user', JSON.stringify(userWithoutPassword));
-      setIsLoading(false);
-      return true;
+  const fetchProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error) {
+        console.error('Error fetching profile:', error);
+        return;
+      }
+
+      setProfile(data);
+    } catch (error) {
+      console.error('Error fetching profile:', error);
     }
-    setIsLoading(false);
-    return false;
   };
 
-  const signup = async (name: string, email: string, password: string): Promise<boolean> => {
-    setIsLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-    
-    // Check if user already exists
-    if (mockUsers.find(u => u.email === email)) {
+  useEffect(() => {
+    // Set up auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          // Defer profile fetch to avoid deadlock
+          setTimeout(() => {
+            fetchProfile(session.user.id);
+          }, 0);
+        } else {
+          setProfile(null);
+        }
+        
+        setIsLoading(false);
+      }
+    );
+
+    // Check for existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        setTimeout(() => {
+          fetchProfile(session.user.id);
+        }, 0);
+      }
+      
       setIsLoading(false);
-      return false;
-    }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signInWithOtp = async (email: string) => {
+    setIsLoading(true);
     
-    const newUser = {
-      id: Date.now().toString(),
-      name,
+    const redirectUrl = `${window.location.origin}/`;
+    
+    const { error } = await supabase.auth.signInWithOtp({
       email,
-      balance: 1000.00 // Starting balance
-    };
-    
-    setUser(newUser);
-    localStorage.setItem('transakt_user', JSON.stringify(newUser));
+      options: {
+        emailRedirectTo: redirectUrl
+      }
+    });
+
     setIsLoading(false);
-    return true;
+    return { error };
+  };
+
+  const signUp = async (email: string, password: string, fullName?: string) => {
+    setIsLoading(true);
+    
+    const redirectUrl = `${window.location.origin}/`;
+    
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: redirectUrl,
+        data: {
+          full_name: fullName || '',
+          display_name: fullName?.split(' ')[0] || email.split('@')[0]
+        }
+      }
+    });
+
+    setIsLoading(false);
+    return { error };
   };
 
   const mockBiometricAuth = async (): Promise<boolean> => {
+    if (!hasValidSession) {
+      return false;
+    }
+    
     setIsLoading(true);
     await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate biometric scan
-    
-    // Mock successful biometric auth - login as Sarah
-    const biometricUser = mockUsers[0];
-    const { password: _, ...userWithoutPassword } = biometricUser;
-    setUser(userWithoutPassword);
-    localStorage.setItem('transakt_user', JSON.stringify(userWithoutPassword));
     setIsLoading(false);
     return true;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('transakt_user');
+    setSession(null);
+    setProfile(null);
   };
 
   return (
     <AuthContext.Provider value={{
       user,
-      login,
-      signup,
-      logout,
+      profile,
+      session,
       isLoading,
-      mockBiometricAuth
+      signInWithOtp,
+      signUp,
+      logout,
+      mockBiometricAuth,
+      hasValidSession
     }}>
       {children}
     </AuthContext.Provider>
